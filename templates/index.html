@@ -25,13 +25,8 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.4);
         }
 
-        /* Plavi markeri (gradske linije) */
         .bus-blue { background-color: #1e88e5; }
-
-        /* Crveni markeri (prigradske linije) */
         .bus-red { background-color: #e53935; }
-
-        /* Sivi markeri (GBR bez linije) */
         .bus-dark { background-color: #546e7a; font-size: 11px; }
 
         .locate-btn {
@@ -63,37 +58,38 @@
 
     L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
         maxZoom: 17,
-        attribution: 'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap'
+        attribution: 'Map data: © OpenStreetMap contributors | Map style: © OpenTopoMap'
     }).addTo(map);
 
     var markers = {};
 
-    function updateBuses() {
-        fetch('/api/vehicles')
-            .then(res => res.json())
-            .then(data => {
-                let buses = [];
-                if (Array.isArray(data)) {
-                    buses = data;
-                } else if (data && typeof data === 'object') {
-                    buses = data.buses || data.data || data.vehicles || Object.values(data);
-                }
+    function connectWebSocket() {
+        // Izravno spajanje na službeni Autotrolej WebSocket
+        const socket = new WebSocket('wss://api.autotrolej.hr/api/Hub/location');
 
-                if (!Array.isArray(buses)) return;
+        socket.onopen = function() {
+            console.log("Povezano na Autotrolej WebSocket server.");
+        };
 
-                buses.forEach(bus => {
+        socket.onmessage = function(event) {
+            try {
+                let data = JSON.parse(event.data);
+                
+                let items = Array.isArray(data) ? data : [data];
+
+                items.forEach(bus => {
                     if (!bus) return;
 
-                    const lat = parseFloat(bus.lat || bus.latitude || bus.y || bus.latitud);
-                    const lon = parseFloat(bus.lon || bus.lng || bus.longitude || bus.x || bus.longitud);
-                    const gbr = bus.gbr || bus.bus_id || bus.id || bus.garazni_broj || "???";
-                    const rawLine = bus.line || bus.linija || bus.route || bus.br_linije;
+                    const lat = parseFloat(bus.lat || bus.latitude || bus.y);
+                    const lon = parseFloat(bus.lon || bus.lng || bus.longitude || bus.x);
+                    const gbr = bus.gbr || bus.bus_id || bus.id || bus.garageNumber || "???";
+                    const rawLine = bus.line || bus.linija || bus.route || bus.lineNumber || "";
 
                     if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
                         let displayText = "";
                         let bgClass = "bus-dark";
 
-                        const lineStr = rawLine ? String(rawLine).trim() : "";
+                        const lineStr = String(rawLine).trim();
                         const lineNum = lineStr ? parseInt(lineStr.replace(/\D/g, ''), 10) : NaN;
 
                         if (lineStr && !isNaN(lineNum) && lineNum < 100) {
@@ -121,8 +117,20 @@
                         }
                     }
                 });
-            })
-            .catch(err => console.error("Greška pri dohvatu vozila:", err));
+            } catch (e) {
+                console.error("Greška pri obradi WebSocket poruke:", e);
+            }
+        };
+
+        socket.onclose = function() {
+            console.log("Veza prekinuta. Pokušaj ponovnog spajanja za 3 sekunde...");
+            setTimeout(connectWebSocket, 3000);
+        };
+
+        socket.onerror = function(err) {
+            console.error("WebSocket greška:", err);
+            socket.close();
+        };
     }
 
     function locateUser() {
@@ -133,8 +141,7 @@
         L.marker(e.latlng).addTo(map).bindPopup("Tvoja lokacija").openPopup();
     });
 
-    setInterval(updateBuses, 5000);
-    updateBuses();
+    connectWebSocket();
 </script>
 </body>
 </html>
