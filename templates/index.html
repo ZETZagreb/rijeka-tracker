@@ -53,6 +53,8 @@
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+
 <script>
     var map = L.map('map', { zoomControl: true }).setView([45.3271, 14.4422], 12);
 
@@ -63,74 +65,90 @@
 
     var markers = {};
 
-    function connectWebSocket() {
-        // Izravno spajanje na službeni Autotrolej WebSocket
-        const socket = new WebSocket('wss://api.autotrolej.hr/api/Hub/location');
+    function processBuses(data) {
+        if (!data) return;
+        let items = Array.isArray(data) ? data : (data.buses || data.data || [data]);
 
-        socket.onopen = function() {
-            console.log("Povezano na Autotrolej WebSocket server.");
-        };
+        items.forEach(bus => {
+            if (!bus) return;
 
-        socket.onmessage = function(event) {
-            try {
-                let data = JSON.parse(event.data);
-                
-                let items = Array.isArray(data) ? data : [data];
+            const lat = parseFloat(bus.lat || bus.latitude || bus.y || bus.latitud);
+            const lon = parseFloat(bus.lon || bus.lng || bus.longitude || bus.x || bus.longitud);
+            const gbr = bus.gbr || bus.bus_id || bus.id || bus.garageNumber || bus.garazniBroj || "???";
+            const rawLine = bus.line || bus.linija || bus.route || bus.lineNumber || bus.brojLinije || "";
 
-                items.forEach(bus => {
-                    if (!bus) return;
+            if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
+                let displayText = "";
+                let bgClass = "bus-dark";
 
-                    const lat = parseFloat(bus.lat || bus.latitude || bus.y);
-                    const lon = parseFloat(bus.lon || bus.lng || bus.longitude || bus.x);
-                    const gbr = bus.gbr || bus.bus_id || bus.id || bus.garageNumber || "???";
-                    const rawLine = bus.line || bus.linija || bus.route || bus.lineNumber || "";
+                const lineStr = String(rawLine).trim();
+                const lineNum = lineStr ? parseInt(lineStr.replace(/\D/g, ''), 10) : NaN;
 
-                    if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
-                        let displayText = "";
-                        let bgClass = "bus-dark";
+                if (lineStr && !isNaN(lineNum) && lineNum < 100) {
+                    displayText = lineStr;
+                    bgClass = (lineNum <= 10) ? 'bus-blue' : 'bus-red';
+                } else {
+                    displayText = String(gbr);
+                    bgClass = 'bus-dark';
+                }
 
-                        const lineStr = String(rawLine).trim();
-                        const lineNum = lineStr ? parseInt(lineStr.replace(/\D/g, ''), 10) : NaN;
-
-                        if (lineStr && !isNaN(lineNum) && lineNum < 100) {
-                            displayText = lineStr;
-                            bgClass = (lineNum <= 10) ? 'bus-blue' : 'bus-red';
-                        } else {
-                            displayText = String(gbr);
-                            bgClass = 'bus-dark';
-                        }
-
-                        const icon = L.divIcon({
-                            className: '',
-                            html: `<div class="bus-badge ${bgClass}">${displayText}</div>`,
-                            iconSize: [34, 34],
-                            iconAnchor: [17, 17]
-                        });
-
-                        const id = String(gbr);
-
-                        if (markers[id]) {
-                            markers[id].setLatLng([lat, lon]).setIcon(icon);
-                        } else {
-                            markers[id] = L.marker([lat, lon], {icon: icon}).addTo(map)
-                                .bindPopup(`<b>GBR: ${gbr}</b><br>Linija: <b>${lineStr || 'Nema linije'}</b>`);
-                        }
-                    }
+                const icon = L.divIcon({
+                    className: '',
+                    html: `<div class="bus-badge ${bgClass}">${displayText}</div>`,
+                    iconSize: [34, 34],
+                    iconAnchor: [17, 17]
                 });
-            } catch (e) {
-                console.error("Greška pri obradi WebSocket poruke:", e);
+
+                const id = String(gbr);
+
+                if (markers[id]) {
+                    markers[id].setLatLng([lat, lon]).setIcon(icon);
+                } else {
+                    markers[id] = L.marker([lat, lon], {icon: icon}).addTo(map)
+                        .bindPopup(`<b>GBR: ${gbr}</b><br>Linija: <b>${lineStr || 'Nema linije'}</b>`);
+                }
             }
-        };
+        });
+    }
 
-        socket.onclose = function() {
-            console.log("Veza prekinuta. Pokušaj ponovnog spajanja za 3 sekunde...");
-            setTimeout(connectWebSocket, 3000);
-        };
+    // HTTP Polling fallback
+    function fetchHTTP() {
+        fetch('/api/vehicles')
+            .then(res => res.json())
+            .then(data => processBuses(data))
+            .catch(err => console.error("HTTP Fetch Error:", err));
+    }
 
-        socket.onerror = function(err) {
-            console.error("WebSocket greška:", err);
-            socket.close();
-        };
+    // SignalR spajanje na Autotrolej Hub
+    function initSignalR() {
+        try {
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl("https://api.autotrolej.hr/api/Hub/location", {
+                    skipNegotiation: false,
+                    transport: signalR.HttpTransportType.WebSockets
+                })
+                .withAutomaticReconnect()
+                .build();
+
+            connection.on("ReceiveLocation", function (data) {
+                processBuses(data);
+            });
+
+            connection.on("location", function (data) {
+                processBuses(data);
+            });
+
+            connection.start()
+                .then(() => console.log("SignalR Connected!"))
+                .catch(err => {
+                    console.warn("SignalR nije uspio, prelazimo na HTTP polling", err);
+                    setInterval(fetchHTTP, 5000);
+                    fetchHTTP();
+                });
+        } catch (e) {
+            setInterval(fetchHTTP, 5000);
+            fetchHTTP();
+        }
     }
 
     function locateUser() {
@@ -141,7 +159,7 @@
         L.marker(e.latlng).addTo(map).bindPopup("Tvoja lokacija").openPopup();
     });
 
-    connectWebSocket();
+    initSignalR();
 </script>
 </body>
 </html>
