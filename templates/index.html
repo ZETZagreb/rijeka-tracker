@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autotrolej — uživo lokacije autobusa</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; height: 100%; width: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+        
+        #map { width: 100%; height: 100vh; z-index: 1; }
+
+        .bus-badge {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            border: 2px solid #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #ffffff;
+            font-size: 12px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+        }
+
+        .bus-blue { background-color: #1e88e5; }
+        .bus-red { background-color: #e53935; }
+        .bus-dark { background-color: #546e7a; font-size: 11px; }
+
+        .locate-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: #ffffff;
+            border: 1px solid #ccc;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            color: #333;
+        }
+        .locate-btn:hover { background: #f8f9fa; }
+    </style>
+</head>
+<body>
+
+<button class="locate-btn" onclick="locateUser()">📍 Lociraj me</button>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    var map = L.map('map', { zoomControl: true }).setView([45.3271, 14.4422], 12);
+
+    L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        maxZoom: 17,
+        attribution: 'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap'
+    }).addTo(map);
+
+    var markers = {};
+
+    function updateBuses() {
+        fetch('/api/vehicles')
+            .then(res => res.json())
+            .then(data => {
+                let buses = Array.isArray(data) ? data : (data.buses || data.data || []);
+
+                buses.forEach(bus => {
+                    const lat = parseFloat(bus.lat || bus.latitude || bus.y);
+                    const lon = parseFloat(bus.lon || bus.lng || bus.longitude || bus.x);
+                    const gbr = bus.gbr || bus.bus_id || bus.id || "???";
+                    const rawLine = bus.line || bus.linija || bus.route;
+
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        let displayText = "";
+                        let bgClass = "bus-dark";
+
+                        const lineNum = rawLine ? parseInt(String(rawLine).replace(/\D/g, ''), 10) : NaN;
+
+                        if (rawLine && !isNaN(lineNum) && lineNum < 100) {
+                            displayText = String(rawLine);
+                            bgClass = (lineNum <= 10) ? 'bus-blue' : 'bus-red';
+                        } else {
+                            displayText = String(gbr);
+                            bgClass = 'bus-dark';
+                        }
+
+                        const icon = L.divIcon({
+                            className: '',
+                            html: `<div class="bus-badge ${bgClass}">${displayText}</div>`,
+                            iconSize: [34, 34],
+                            iconAnchor: [17, 17]
+                        });
+
+                        const id = bus.id || gbr || (lat + "_" + lon);
+
+                        if (markers[id]) {
+                            markers[id].setLatLng([lat, lon]).setIcon(icon);
+                        } else {
+                            markers[id] = L.marker([lat, lon], {icon: icon}).addTo(map)
+                                .bindPopup(`<b>GBR: ${gbr}</b><br>Linija: <b>${rawLine || 'Nema linije'}</b>`);
+                        }
+                    }
+                });
+            })
+            .catch(err => console.error("Greška pri dohvatu vozila:", err));
+    }
+
+    function locateUser() {
+        map.locate({setView: true, maxZoom: 15});
+    }
+
+    map.on('locationfound', function(e) {
+        L.marker(e.latlng).addTo(map).bindPopup("Tvoja lokacija").openPopup();
+    });
+
+    setInterval(updateBuses, 5000);
+    updateBuses();
+</script>
+</body>
+</html>
