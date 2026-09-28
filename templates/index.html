@@ -25,8 +25,13 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.4);
         }
 
+        /* Plavi markeri (gradske linije) */
         .bus-blue { background-color: #1e88e5; }
+
+        /* Crveni markeri (prigradske linije) */
         .bus-red { background-color: #e53935; }
+
+        /* Sivi markeri (GBR bez linije) */
         .bus-dark { background-color: #546e7a; font-size: 11px; }
 
         .locate-btn {
@@ -67,22 +72,32 @@
         fetch('/api/vehicles')
             .then(res => res.json())
             .then(data => {
-                let buses = Array.isArray(data) ? data : (data.buses || data.data || []);
+                let buses = [];
+                if (Array.isArray(data)) {
+                    buses = data;
+                } else if (data && typeof data === 'object') {
+                    buses = data.buses || data.data || data.vehicles || Object.values(data);
+                }
+
+                if (!Array.isArray(buses)) return;
 
                 buses.forEach(bus => {
-                    const lat = parseFloat(bus.lat || bus.latitude || bus.y);
-                    const lon = parseFloat(bus.lon || bus.lng || bus.longitude || bus.x);
-                    const gbr = bus.gbr || bus.bus_id || bus.id || "???";
-                    const rawLine = bus.line || bus.linija || bus.route;
+                    if (!bus) return;
 
-                    if (!isNaN(lat) && !isNaN(lon)) {
+                    const lat = parseFloat(bus.lat || bus.latitude || bus.y || bus.latitud);
+                    const lon = parseFloat(bus.lon || bus.lng || bus.longitude || bus.x || bus.longitud);
+                    const gbr = bus.gbr || bus.bus_id || bus.id || bus.garazni_broj || "???";
+                    const rawLine = bus.line || bus.linija || bus.route || bus.br_linije;
+
+                    if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
                         let displayText = "";
                         let bgClass = "bus-dark";
 
-                        const lineNum = rawLine ? parseInt(String(rawLine).replace(/\D/g, ''), 10) : NaN;
+                        const lineStr = rawLine ? String(rawLine).trim() : "";
+                        const lineNum = lineStr ? parseInt(lineStr.replace(/\D/g, ''), 10) : NaN;
 
-                        if (rawLine && !isNaN(lineNum) && lineNum < 100) {
-                            displayText = String(rawLine);
+                        if (lineStr && !isNaN(lineNum) && lineNum < 100) {
+                            displayText = lineStr;
                             bgClass = (lineNum <= 10) ? 'bus-blue' : 'bus-red';
                         } else {
                             displayText = String(gbr);
@@ -96,13 +111,13 @@
                             iconAnchor: [17, 17]
                         });
 
-                        const id = bus.id || gbr || (lat + "_" + lon);
+                        const id = String(gbr);
 
                         if (markers[id]) {
                             markers[id].setLatLng([lat, lon]).setIcon(icon);
                         } else {
                             markers[id] = L.marker([lat, lon], {icon: icon}).addTo(map)
-                                .bindPopup(`<b>GBR: ${gbr}</b><br>Linija: <b>${rawLine || 'Nema linije'}</b>`);
+                                .bindPopup(`<b>GBR: ${gbr}</b><br>Linija: <b>${lineStr || 'Nema linije'}</b>`);
                         }
                     }
                 });
